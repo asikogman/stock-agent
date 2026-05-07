@@ -365,14 +365,32 @@
     .lang-btn.active { background: rgba(0,212,255,0.2); border-color:#00d4ff; color:#00d4ff; }
 
     /* CHART */
+    .chart-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 8px; margin-bottom: 8px;
+    }
+    .chart-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+    .chart-btn {
+      background: #0d1826;
+      border: 1px solid #1e3a5f;
+      border-radius: 6px;
+      color: #7a9abf;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+    .chart-btn:hover  { background: #1a2a3a; color: #fff; }
+    .chart-btn.active { background: rgba(0,212,255,0.15); border-color: #00d4ff; color: #00d4ff; }
     .chart-container {
       width: 100%;
-      height: 280px;
+      height: 300px;
       border-radius: 8px;
       overflow: hidden;
       background: #0a1220;
       border: 1px solid #1e3a5f;
-      margin-top: 8px;
     }
     .chart-placeholder {
       display:flex; align-items:center; justify-content:center;
@@ -579,7 +597,22 @@
     </div>
 
     <div class="analysis-section">
-      <h4 id="chartTitle">📈 גרף מחיר — 3 חודשים</h4>
+      <h4 id="chartTitle">📈 גרף מחיר</h4>
+      <div class="chart-toolbar">
+        <div class="chart-btns" id="periodBtns">
+          <button class="chart-btn" onclick="changeChartPeriod('1d')"  id="cp-1d">יום</button>
+          <button class="chart-btn" onclick="changeChartPeriod('1mo')" id="cp-1mo">חודש</button>
+          <button class="chart-btn active" onclick="changeChartPeriod('3mo')" id="cp-3mo">3 חודשים</button>
+          <button class="chart-btn" onclick="changeChartPeriod('1y')"  id="cp-1y">שנה</button>
+          <button class="chart-btn" onclick="changeChartPeriod('5y')"  id="cp-5y">5 שנים</button>
+        </div>
+        <div class="chart-btns" id="typeBtns">
+          <button class="chart-btn active" onclick="changeChartType('candle')" id="ct-candle">🕯 נרות</button>
+          <button class="chart-btn" onclick="changeChartType('bar')"    id="ct-bar">📊 ברים</button>
+          <button class="chart-btn" onclick="changeChartType('line')"   id="ct-line">📈 קו</button>
+          <button class="chart-btn" onclick="changeChartType('area')"   id="ct-area">🏔 שטח</button>
+        </div>
+      </div>
       <div class="chart-container" id="chartContainer">
         <div class="chart-placeholder">טוען גרף...</div>
       </div>
@@ -925,40 +958,93 @@
   }
 
   // ── גרף מחיר ─────────────────────────────────────────
-  let _activeChart = null;
+  let _activeChart   = null;
+  let _chartTicker   = null;
+  let _chartPeriod   = '3mo';
+  let _chartType     = 'candle';
+  let _chartObserver = null;
 
-  async function loadChart(ticker) {
+  async function loadChart(ticker, period, type) {
+    if (ticker) _chartTicker = ticker;
+    if (period) _chartPeriod = period;
+    if (type)   _chartType   = type;
+    if (!_chartTicker) return;
+
     const container = document.getElementById('chartContainer');
     if (!container) return;
     container.innerHTML = `<div class="chart-placeholder">${t('loadingChart')}</div>`;
-    if (_activeChart) { try { _activeChart.remove(); } catch(e){} _activeChart = null; }
+    if (_activeChart)   { try { _activeChart.remove(); }   catch(e){} _activeChart = null; }
+    if (_chartObserver) { try { _chartObserver.disconnect(); } catch(e){} _chartObserver = null; }
+
     try {
-      const data = await fetchJSON(`/api/history/${ticker}`);
-      if (!data || !data.length) {
+      const resp = await fetch(`${API}/api/history/${_chartTicker}?period=${_chartPeriod}`);
+      const json = await resp.json();
+      const raw  = json.data || json;   // תמיכה בפורמט ישן
+      const intraday = json.intraday || false;
+
+      if (!raw || !raw.length) {
         container.innerHTML = `<div class="chart-placeholder">${t('noChart')}</div>`;
         return;
       }
+
       container.innerHTML = '';
       const chart = LightweightCharts.createChart(container, {
-        width: container.clientWidth, height: 270,
+        width: container.clientWidth, height: 300,
         layout: { background: { color: '#0a1220' }, textColor: '#7a9abf' },
-        grid: { vertLines: { color: '#1a2a3a' }, horzLines: { color: '#1a2a3a' } },
+        grid:   { vertLines: { color: '#1a2a3a' }, horzLines: { color: '#1a2a3a' } },
         rightPriceScale: { borderColor: '#1e3a5f' },
-        timeScale: { borderColor: '#1e3a5f', rightOffset: 5, timeVisible: true },
+        timeScale: { borderColor: '#1e3a5f', rightOffset: 5, timeVisible: intraday },
         crosshair: { mode: 1 },
       });
-      const cs = chart.addCandlestickSeries({
-        upColor:'#00e676', downColor:'#ff5252',
-        borderUpColor:'#00e676', borderDownColor:'#ff5252',
-        wickUpColor:'#00e676', wickDownColor:'#ff5252',
-      });
-      cs.setData(data);
+
+      let series;
+      if (_chartType === 'candle') {
+        series = chart.addCandlestickSeries({
+          upColor:'#00e676', downColor:'#ff5252',
+          borderUpColor:'#00e676', borderDownColor:'#ff5252',
+          wickUpColor:'#00e676', wickDownColor:'#ff5252',
+        });
+        series.setData(raw);
+      } else if (_chartType === 'bar') {
+        series = chart.addBarSeries({
+          upColor:'#00e676', downColor:'#ff5252',
+        });
+        series.setData(raw);
+      } else if (_chartType === 'line') {
+        series = chart.addLineSeries({ color:'#00d4ff', lineWidth: 2 });
+        series.setData(raw.map(d => ({ time: d.time, value: d.close })));
+      } else if (_chartType === 'area') {
+        series = chart.addAreaSeries({
+          topColor: 'rgba(0,212,255,0.3)', bottomColor: 'rgba(0,212,255,0.02)',
+          lineColor: '#00d4ff', lineWidth: 2,
+        });
+        series.setData(raw.map(d => ({ time: d.time, value: d.close })));
+      }
+
       chart.timeScale().fitContent();
       _activeChart = chart;
-      new ResizeObserver(() => { try { chart.applyOptions({ width: container.clientWidth }); } catch(e){} }).observe(container);
+      _chartObserver = new ResizeObserver(() => {
+        try { chart.applyOptions({ width: container.clientWidth }); } catch(e){}
+      });
+      _chartObserver.observe(container);
+
     } catch(e) {
       container.innerHTML = `<div class="chart-placeholder">${t('noChart')}</div>`;
     }
+  }
+
+  function changeChartPeriod(period) {
+    _chartPeriod = period;
+    document.querySelectorAll('#periodBtns .chart-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('cp-' + period)?.classList.add('active');
+    loadChart(null, period, null);
+  }
+
+  function changeChartType(type) {
+    _chartType = type;
+    document.querySelectorAll('#typeBtns .chart-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('ct-' + type)?.classList.add('active');
+    loadChart(null, null, type);
   }
 
   // ── Signal helpers ─────────────────────────────────────

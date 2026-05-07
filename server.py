@@ -1,5 +1,5 @@
 import os, re, concurrent.futures
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 import yfinance as yf
 import urllib.request as ur
@@ -632,23 +632,39 @@ MARKET_SYMBOLS = {
 
 @app.route("/api/history/<path:ticker>")
 def history(ticker):
-    """Return OHLCV candle data for charting (3 months, daily)."""
+    """Return OHLCV candle data for charting. Supports ?period=1d|1mo|3mo|1y|5y"""
     resolved = resolve_ticker(ticker)
+    period   = request.args.get("period", "3mo")
+
+    PERIOD_MAP = {
+        "1d":  ("1d",  "5m"),
+        "1mo": ("1mo", "1d"),
+        "3mo": ("3mo", "1d"),
+        "1y":  ("1y",  "1wk"),
+        "5y":  ("5y",  "1wk"),
+    }
+    yf_period, interval = PERIOD_MAP.get(period, ("3mo", "1d"))
+    intraday = interval in ("1m", "5m", "15m", "30m", "1h")
+
     try:
         t    = yf.Ticker(resolved)
-        hist = t.history(period="3mo", interval="1d")
+        hist = t.history(period=yf_period, interval=interval)
         if hist.empty:
             return jsonify([])
         data = []
         for ts, row in hist.iterrows():
+            # Intraday: Unix timestamp; Daily/Weekly: date string
+            time_val = int(ts.timestamp()) if intraday else ts.strftime("%Y-%m-%d")
+            o = float(row['Open']); h = float(row['High'])
+            l = float(row['Low']);  c = float(row['Close'])
+            if any(v != v for v in [o,h,l,c]):  # skip NaN rows
+                continue
             data.append({
-                "time":  ts.strftime("%Y-%m-%d"),
-                "open":  round(float(row['Open']),  4),
-                "high":  round(float(row['High']),  4),
-                "low":   round(float(row['Low']),   4),
-                "close": round(float(row['Close']), 4),
+                "time": time_val,
+                "open":  round(o, 4), "high": round(h, 4),
+                "low":   round(l, 4), "close": round(c, 4),
             })
-        return jsonify(data)
+        return jsonify({"data": data, "intraday": intraday})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
