@@ -1006,9 +1006,7 @@
         });
         series.setData(raw);
       } else if (_chartType === 'bar') {
-        series = chart.addBarSeries({
-          upColor:'#00e676', downColor:'#ff5252',
-        });
+        series = chart.addBarSeries({ upColor:'#00e676', downColor:'#ff5252' });
         series.setData(raw);
       } else if (_chartType === 'line') {
         series = chart.addLineSeries({ color:'#00d4ff', lineWidth: 2 });
@@ -1020,6 +1018,33 @@
         });
         series.setData(raw.map(d => ({ time: d.time, value: d.close })));
       }
+
+      // ── תמיכה והתנגדות ──────────────────────────────────
+      const levels  = json.levels || {};
+      const supLvls = levels.support    || [];
+      const resLvls = levels.resistance || [];
+
+      supLvls.forEach((price, i) => {
+        series.createPriceLine({
+          price,
+          color:            i === 0 ? '#00e676' : 'rgba(0,230,118,0.55)',
+          lineWidth:        i === 0 ? 2 : 1,
+          lineStyle:        LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title:            `תמיכה`,
+        });
+      });
+
+      resLvls.forEach((price, i) => {
+        series.createPriceLine({
+          price,
+          color:            i === 0 ? '#ff5252' : 'rgba(255,82,82,0.55)',
+          lineWidth:        i === 0 ? 2 : 1,
+          lineStyle:        LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title:            `התנגדות`,
+        });
+      });
 
       chart.timeScale().fitContent();
       _activeChart = chart;

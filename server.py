@@ -630,9 +630,63 @@ MARKET_SYMBOLS = {
     "usdils":"USDILS=X","gold":"GC=F","oil":"BZ=F",
 }
 
+def find_key_levels(hist, current_price):
+    """Find support & resistance levels from swing highs/lows + MAs."""
+    try:
+        closes = [float(x) for x in hist['Close'].values]
+        highs  = [float(x) for x in hist['High'].values]
+        lows   = [float(x) for x in hist['Low'].values]
+        cp     = float(current_price)
+        lb     = 3  # lookback bars each side
+
+        swing_highs, swing_lows = [], []
+        for i in range(lb, len(highs) - lb):
+            if all(highs[i] >= highs[i-j] for j in range(1, lb+1)) and \
+               all(highs[i] >= highs[i+j] for j in range(1, lb+1)):
+                swing_highs.append(highs[i])
+            if all(lows[i] <= lows[i-j] for j in range(1, lb+1)) and \
+               all(lows[i] <= lows[i+j] for j in range(1, lb+1)):
+                swing_lows.append(lows[i])
+
+        def cluster(levels, thr=0.018):
+            if not levels: return []
+            levels = sorted(levels)
+            groups, group = [], [levels[0]]
+            for lv in levels[1:]:
+                if group and (lv - group[-1]) / max(group[-1], 0.001) < thr:
+                    group.append(lv)
+                else:
+                    groups.append(round(sum(group) / len(group), 4))
+                    group = [lv]
+            groups.append(round(sum(group) / len(group), 4))
+            return groups
+
+        res_all = cluster(swing_highs)
+        sup_all = cluster(swing_lows)
+
+        # Keep levels within ±20% of current price
+        resistance = sorted([r for r in res_all if cp * 0.99 < r <= cp * 1.20])[:4]
+        support    = sorted([s for s in sup_all if cp * 0.80 <= s < cp * 1.01], reverse=True)[:4]
+
+        # Add MAs as dynamic levels
+        n20 = min(20, len(closes)); n50 = min(50, len(closes))
+        ma20 = round(sum(closes[-n20:]) / n20, 4)
+        ma50 = round(sum(closes[-n50:]) / n50, 4)
+        for ma in [ma20, ma50]:
+            if cp * 0.80 <= ma <= cp * 1.20:
+                if ma < cp and ma not in support:    support.append(ma)
+                elif ma >= cp and ma not in resistance: resistance.append(ma)
+
+        return {
+            "support":    sorted(support, reverse=True)[:4],
+            "resistance": sorted(resistance)[:4],
+        }
+    except:
+        return {"support": [], "resistance": []}
+
 @app.route("/api/history/<path:ticker>")
 def history(ticker):
-    """Return OHLCV candle data for charting. Supports ?period=1d|1mo|3mo|1y|5y"""
+    """Return OHLCV candle data + support/resistance levels. ?period=1d|1mo|3mo|1y|5y"""
     resolved = resolve_ticker(ticker)
     period   = request.args.get("period", "3mo")
 
@@ -650,21 +704,25 @@ def history(ticker):
         t    = yf.Ticker(resolved)
         hist = t.history(period=yf_period, interval=interval)
         if hist.empty:
-            return jsonify([])
+            return jsonify({"data": [], "intraday": intraday, "levels": {"support":[],"resistance":[]}})
+
         data = []
         for ts, row in hist.iterrows():
-            # Intraday: Unix timestamp; Daily/Weekly: date string
             time_val = int(ts.timestamp()) if intraday else ts.strftime("%Y-%m-%d")
             o = float(row['Open']); h = float(row['High'])
             l = float(row['Low']);  c = float(row['Close'])
-            if any(v != v for v in [o,h,l,c]):  # skip NaN rows
+            if any(v != v for v in [o, h, l, c]):
                 continue
-            data.append({
-                "time": time_val,
-                "open":  round(o, 4), "high": round(h, 4),
-                "low":   round(l, 4), "close": round(c, 4),
-            })
-        return jsonify({"data": data, "intraday": intraday})
+            data.append({"time": time_val,
+                         "open": round(o,4), "high": round(h,4),
+                         "low":  round(l,4), "close": round(c,4)})
+
+        # Calculate key levels from daily data (even if chart is intraday)
+        daily = hist if not intraday else t.history(period="3mo", interval="1d")
+        current = data[-1]["close"] if data else 0
+        levels = find_key_levels(daily, current)
+
+        return jsonify({"data": data, "intraday": intraday, "levels": levels})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
