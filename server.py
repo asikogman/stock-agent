@@ -168,6 +168,80 @@ def _fetch_url(url, timeout=6):
     req = ur.Request(url, headers=HEADERS)
     return ur.urlopen(req, timeout=timeout).read().decode("utf-8", errors="ignore")
 
+# ── Translation cache ─────────────────────────────────────
+_TRANS_CACHE = {}
+
+def translate_he(text):
+    """Translate English text to Hebrew using MyMemory free API."""
+    if not text or len(text.strip()) < 3:
+        return text
+    if any('א' <= c <= 'ת' for c in text):
+        return text
+    if text in _TRANS_CACHE:
+        return _TRANS_CACHE[text]
+    try:
+        url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(text[:400])}&langpair=en|he"
+        r = js.loads(_fetch_url(url, timeout=5))
+        translated = r.get("responseData", {}).get("translatedText", "")
+        if translated and len(translated) > 2 and "MYMEMORY" not in translated.upper():
+            _TRANS_CACHE[text] = translated
+            return translated
+    except:
+        pass
+    return text
+
+# ── Technical target calculator ───────────────────────────
+def calc_technical_target(ticker, current_price):
+    """Calculate price target using technical analysis when no analyst target available."""
+    try:
+        hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
+        if hist.empty or len(hist) < 14:
+            return None
+
+        closes = [float(x) for x in hist['Close'].values]
+        highs  = [float(x) for x in hist['High'].values]
+        lows   = [float(x) for x in hist['Low'].values]
+
+        n20 = min(20, len(closes)); n50 = min(50, len(closes))
+        ma20 = sum(closes[-n20:]) / n20
+        ma50 = sum(closes[-n50:]) / n50
+
+        # RSI (14 periods)
+        seg = closes[-15:]
+        deltas = [seg[i] - seg[i-1] for i in range(1, len(seg))]
+        g = sum(d for d in deltas if d > 0) / 14
+        l = sum(-d for d in deltas if d < 0) / 14
+        rsi = 100 - (100 / (1 + g / l)) if l > 0 else 80.0
+
+        support    = min(lows[-20:])
+        resistance = max(highs[-20:])
+
+        r20 = closes[-n20:]
+        m   = sum(r20) / len(r20)
+        std = (sum((x - m) ** 2 for x in r20) / len(r20)) ** 0.5
+        bb_upper = m + 2 * std
+        bb_lower = m - 2 * std
+
+        cp = float(current_price)
+        if rsi < 35:
+            target, method, confidence = resistance * 0.97, f"RSI={rsi:.0f} — מכירת יתר, יעד לפי התנגדות", "גבוהה"
+        elif rsi > 72:
+            target, method, confidence = cp * 1.04, f"RSI={rsi:.0f} — קנייה יתר, יעד שמרני", "נמוכה"
+        elif ma20 > ma50:
+            target, method, confidence = min(resistance * 1.03, cp * 1.18), f"מגמה עולה (MA20>MA50), יעד לפי התנגדות", "בינונית"
+        else:
+            target, method, confidence = min(ma50 * 1.05, cp * 1.09), "מגמה יורדת, יעד שמרני לפי MA50", "נמוכה"
+
+        return {
+            "target": round(target, 2), "method": method, "confidence": confidence,
+            "rsi": round(rsi, 1), "ma20": round(ma20, 2), "ma50": round(ma50, 2),
+            "support": round(support, 2), "resistance": round(resistance, 2),
+            "bb_upper": round(bb_upper, 2), "bb_lower": round(bb_lower, 2),
+            "technical": True,
+        }
+    except:
+        return None
+
 # ── Source 1: Yahoo Finance (via yfinance) ────────────────
 def target_yahoo(ticker, info):
     try:
@@ -329,7 +403,7 @@ def score_news(title):
     return pos - neg
 
 def fetch_news(ticker):
-    """Fetch recent news headlines via Yahoo Finance."""
+    """Fetch recent news headlines via Yahoo Finance + translate to Hebrew."""
     try:
         t    = yf.Ticker(ticker)
         news = t.news or []
@@ -339,7 +413,6 @@ def fetch_news(ticker):
             title   = content.get("title") or n.get("title","")
             pub     = content.get("provider", {}).get("displayName") or n.get("publisher","")
             ts      = content.get("pubDate") or ""
-            # Parse timestamp
             age = ""
             try:
                 if ts:
@@ -350,12 +423,20 @@ def fetch_news(ticker):
             except: pass
             if title:
                 items.append({
-                    "title":  title,
-                    "pub":    pub,
-                    "age":    age,
-                    "score":  score_news(title),
-                    "url":    content.get("canonicalUrl",{}).get("url","") or n.get("link","")
+                    "title":    title,
+                    "title_he": "",
+                    "pub":      pub,
+                    "age":      age,
+                    "score":    score_news(title),
+                    "url":      content.get("canonicalUrl",{}).get("url","") or n.get("link","")
                 })
+        # Translate all titles in parallel
+        if items:
+            def do_trans(item):
+                item["title_he"] = translate_he(item["title"])
+                return item
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+                items = list(ex.map(do_trans, items, timeout=8))
         return items
     except:
         return []
@@ -469,14 +550,22 @@ def get_stock_data(ticker, with_news=False):
         analyst_count  = multi["analyst_count"]
         target_low     = multi["target_low"]
         target_high    = multi["target_high"]
-        # אם הממוצע עדיין מתחת למחיר — דגל כמיושן אבל השתמש בו
         if float(target) < float(price) * 0.95:
             target_stale = True
     elif target:
-        # fallback: single Yahoo Finance target
         if float(target) < float(price) * 0.99:
             target_stale = True
             target       = None
+
+    # ── אם אין יעד אנליסטים תקף → ניתוח טכני עצמאי ──────
+    tech_info = None
+    if (not target or target_stale) and price != "N/A":
+        tech_info = calc_technical_target(ticker, price)
+        if tech_info:
+            target         = tech_info["target"]
+            target_sources = ["ניתוח טכני עצמאי"]
+            target_stale   = False
+            analyst_count  = 0
     # ──────────────────────────────────────────────────────
 
     upside = round((float(target)-float(price))/float(price)*100, 1) if target else None
@@ -523,7 +612,8 @@ def get_stock_data(ticker, with_news=False):
         "signal":         signal, "stop": stop, "tp": tp,
         "currency":       currency,
         "currency_sym":   sym,
-        "volume":        fmt(inf.three_month_average_volume, 0) if hasattr(inf,"three_month_average_volume") else None,
+        "volume":         fmt(inf.three_month_average_volume, 0) if hasattr(inf,"three_month_average_volume") else None,
+        "tech_info":      tech_info,
     }
 
     if with_news:
@@ -539,6 +629,28 @@ MARKET_SYMBOLS = {
     "sp500":"^GSPC","nasdaq":"^IXIC","dow":"^DJI",
     "usdils":"USDILS=X","gold":"GC=F","oil":"BZ=F",
 }
+
+@app.route("/api/history/<path:ticker>")
+def history(ticker):
+    """Return OHLCV candle data for charting (3 months, daily)."""
+    resolved = resolve_ticker(ticker)
+    try:
+        t    = yf.Ticker(resolved)
+        hist = t.history(period="3mo", interval="1d")
+        if hist.empty:
+            return jsonify([])
+        data = []
+        for ts, row in hist.iterrows():
+            data.append({
+                "time":  ts.strftime("%Y-%m-%d"),
+                "open":  round(float(row['Open']),  4),
+                "high":  round(float(row['High']),  4),
+                "low":   round(float(row['Low']),   4),
+                "close": round(float(row['Close']), 4),
+            })
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route("/api/market")
 def market():
@@ -698,7 +810,43 @@ def sector(name):
         try: results.append(get_stock_data(t, with_news=False))
         except: continue
     results.sort(key=lambda x: x.get("change") or 0, reverse=True)
-    return jsonify(results)
+
+    if not results:
+        return jsonify({"stocks": [], "analysis": {}})
+
+    changes = [float(r["change"]) for r in results if r.get("change") is not None]
+    upsides = [float(r["upside"]) for r in results if r.get("upside") is not None]
+    signals = [r["signal"] for r in results if r.get("signal")]
+
+    avg_change = round(sum(changes) / len(changes), 2) if changes else 0
+    avg_upside = round(sum(upsides) / len(upsides), 2) if upsides else 0
+    buy_count  = sum(1 for s in signals if "קנייה" in s)
+    sell_count = sum(1 for s in signals if "מכירה" in s)
+
+    if avg_change > 1:    trend = "עולה 🟢"
+    elif avg_change < -1: trend = "יורד 🔴"
+    else:                 trend = "ניטרלי ⚪"
+
+    best  = results[0]
+    worst = results[-1]
+
+    analysis = {
+        "trend":        trend,
+        "avg_change":   avg_change,
+        "avg_upside":   avg_upside,
+        "buy_count":    buy_count,
+        "sell_count":   sell_count,
+        "total":        len(results),
+        "best_ticker":  best["ticker"],
+        "best_name":    best.get("name", best["ticker"]),
+        "best_change":  best["change"],
+        "worst_ticker": worst["ticker"],
+        "worst_name":   worst.get("name", worst["ticker"]),
+        "worst_change": worst["change"],
+        "sentiment":    "שוריש 📈" if avg_change > 0 else "דובי 📉",
+        "summary":      f"הסקטור {trend} בממוצע {abs(avg_change):.1f}% | {buy_count}/{len(results)} מניות עם איתות קנייה | פוטנציאל ממוצע +{avg_upside:.1f}%",
+    }
+    return jsonify({"stocks": results, "analysis": analysis})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))

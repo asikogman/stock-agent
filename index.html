@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="סוכן בורסה"/>
   <meta name="theme-color" content="#0a0e1a"/>
   <title>סוכן הבורסה שלי</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -347,6 +348,43 @@
     .market-card .mc-val  { font-size: 17px; font-weight: 700; color: #fff; }
     .market-card .mc-chg  { font-size: 12px; margin-top: 3px; }
 
+    /* LANGUAGE SELECTOR */
+    .lang-selector { display:flex; gap:6px; }
+    .lang-btn {
+      background: rgba(0,212,255,0.07);
+      border: 1px solid rgba(0,212,255,0.2);
+      border-radius: 6px;
+      color: #7a9abf;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .lang-btn:hover  { background: rgba(0,212,255,0.15); color:#fff; }
+    .lang-btn.active { background: rgba(0,212,255,0.2); border-color:#00d4ff; color:#00d4ff; }
+
+    /* CHART */
+    .chart-container {
+      width: 100%;
+      height: 280px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0a1220;
+      border: 1px solid #1e3a5f;
+      margin-top: 8px;
+    }
+    .chart-placeholder {
+      display:flex; align-items:center; justify-content:center;
+      height: 100%; color: #3a5a7f; font-size:13px;
+    }
+
+    /* SECTOR TABLE */
+    .sector-table { width:100%; border-collapse:collapse; font-size:13px; margin-top:10px; }
+    .sector-table th { color:#7a9abf; font-size:11px; font-weight:600; padding:6px 10px; text-align:right; border-bottom:1px solid #1e3a5f; }
+    .sector-table td { padding:8px 10px; border-bottom:1px solid #0f1e30; }
+    .sector-table tr:hover td { background: rgba(0,212,255,0.04); }
+
     /* FOOTER */
     footer {
       text-align: center;
@@ -411,13 +449,18 @@
     </div>
   </div>
   <div class="header-stats">
+    <div class="lang-selector">
+      <button class="lang-btn active" onclick="setLang('he')">עב</button>
+      <button class="lang-btn" onclick="setLang('ru')">RU</button>
+      <button class="lang-btn" onclick="setLang('en')">EN</button>
+    </div>
     <div class="stat-badge">
       <div class="val" id="apiStatus" style="color:#ffc107">⏳ מתחבר</div>
-      <div class="lbl">מצב נתונים</div>
+      <div class="lbl" id="lbl-status">מצב נתונים</div>
     </div>
     <div class="stat-badge">
       <div class="val" id="live-time">--:--</div>
-      <div class="lbl">שעה נוכחית</div>
+      <div class="lbl" id="lbl-time">שעה נוכחית</div>
     </div>
   </div>
 </header>
@@ -536,7 +579,14 @@
     </div>
 
     <div class="analysis-section">
-      <h4>🎯 יעד מחיר אנליסטים — ממספר מקורות</h4>
+      <h4 id="chartTitle">📈 גרף מחיר — 3 חודשים</h4>
+      <div class="chart-container" id="chartContainer">
+        <div class="chart-placeholder">טוען גרף...</div>
+      </div>
+    </div>
+
+    <div class="analysis-section">
+      <h4 id="targetTitle">🎯 יעד מחיר — ממספר מקורות</h4>
       <div id="targetSourcesSection"></div>
     </div>
 
@@ -577,6 +627,109 @@
 
 <script>
   const API = '';
+
+  // ── תרגומים ───────────────────────────────────────────
+  const TR = {
+    he: {
+      title:'סוכן הבורסה שלי', subtitle:'ניתוח חכם • חדשות • פסיכולוגיית שוק',
+      marketTitle:'סקירת שוק', actionTitle:'מה תרצה לעשות?',
+      statusLbl:'מצב נתונים', timeLbl:'שעה נוכחית',
+      c1t:'נתח מניה ספציפית', c1d:'הכנס שם או טיקר וקבל ניתוח מלא עם איתות קנייה/מכירה',
+      c2t:'מצא לי הזדמנות',   c2d:'אני אסרוק את השוק ואמצא מניה מעניינת עכשיו',
+      c3t:'בדוק פוזיציה פתוחה', c3d:'הכנס מניה שיש לך — אגיד לך להחזיק, לצאת, או להוסיף',
+      c4t:'עדכון שוק יומי',   c4d:'מה קורה היום + איך זה משפיע על פסיכולוגיית המשקיעים',
+      c5t:'ניתוח סקטור',      c5d:'בחר תחום ואני אנתח לעומק — מגמות, סיכונים, הזדמנויות',
+      analyze:'⚡ נתח עכשיו', loading:'סורק נתונים עדכניים מהשוק...',
+      chartSec:'📈 גרף מחיר — 3 חודשים', targetSec:'🎯 יעד מחיר — ממספר מקורות',
+      techSec:'📊 ניתוח טכני', newsSec:'📰 חדשות אחרונות',
+      psychSec:'🧠 פסיכולוגיית המשקיעים', outerSec:'💡 חשיבה מחוץ לקופסה',
+      riskSec:'⚠️ הערת סיכון', ph1:'לדוגמה: AAPL, NVDA, TEVA, LUMI.TA...',
+      ph3:'לדוגמה: TSLA 180  או  NVDA 150', ph5:'טכנולוגיה / בנקים / ביומד / אנרגיה / נדלן / ישראלי',
+      noNews:'לא נמצאו חדשות אחרונות', noChart:'אין נתוני גרף',
+      loadingChart:'טוען גרף...', techTarget:'ניתוח טכני עצמאי',
+    },
+    en: {
+      title:'My Stock Agent', subtitle:'Smart Analysis • News • Market Psychology',
+      marketTitle:'Market Overview', actionTitle:'What would you like to do?',
+      statusLbl:'Data Status', timeLbl:'Current Time',
+      c1t:'Analyze a Stock',    c1d:'Enter name or ticker for full analysis with buy/sell signal',
+      c2t:'Find an Opportunity', c2d:'I will scan the market and find an interesting stock now',
+      c3t:'Check Open Position', c3d:'Enter a stock you hold — I will tell you to hold, exit, or add',
+      c4t:'Daily Market Update', c4d:'What is happening today + how it affects investor psychology',
+      c5t:'Sector Analysis',     c5d:'Choose a sector for deep analysis — trends, risks, opportunities',
+      analyze:'⚡ Analyze Now', loading:'Fetching live market data...',
+      chartSec:'📈 Price Chart — 3 Months', targetSec:'🎯 Price Target — Multiple Sources',
+      techSec:'📊 Technical Analysis', newsSec:'📰 Latest News',
+      psychSec:'🧠 Investor Psychology', outerSec:'💡 Outside the Box',
+      riskSec:'⚠️ Risk Note', ph1:'e.g.: AAPL, NVDA, TEVA, LUMI.TA...',
+      ph3:'e.g.: TSLA 180  or  NVDA 150', ph5:'Technology / Banks / Biotech / Energy / Real Estate / Israeli',
+      noNews:'No recent news found', noChart:'No chart data available',
+      loadingChart:'Loading chart...', techTarget:'Independent Technical Analysis',
+    },
+    ru: {
+      title:'Мой Биржевой Агент', subtitle:'Умный анализ • Новости • Психология рынка',
+      marketTitle:'Обзор рынка', actionTitle:'Что вы хотите сделать?',
+      statusLbl:'Статус данных', timeLbl:'Текущее время',
+      c1t:'Анализировать акцию', c1d:'Введите название или тикер для полного анализа с сигналом',
+      c2t:'Найти возможность',   c2d:'Я просканирую рынок и найду интересную акцию',
+      c3t:'Проверить позицию',   c3d:'Введите акцию — скажу держать, продавать или добавить',
+      c4t:'Дневное обновление',  c4d:'Что происходит сегодня и как это влияет на психологию рынка',
+      c5t:'Анализ сектора',      c5d:'Выберите сектор для глубокого анализа — тренды, риски, возможности',
+      analyze:'⚡ Анализировать', loading:'Загрузка рыночных данных...',
+      chartSec:'📈 График цены — 3 месяца', targetSec:'🎯 Целевая цена — несколько источников',
+      techSec:'📊 Технический анализ', newsSec:'📰 Последние новости',
+      psychSec:'🧠 Психология инвесторов', outerSec:'💡 Нестандартное мышление',
+      riskSec:'⚠️ Предупреждение о рисках', ph1:'например: AAPL, NVDA, TEVA, LUMI.TA...',
+      ph3:'например: TSLA 180  или  NVDA 150', ph5:'Технологии / Банки / Биомед / Энергия / Недвижимость / Израильские',
+      noNews:'Последние новости не найдены', noChart:'Данные графика недоступны',
+      loadingChart:'Загрузка графика...', techTarget:'Независимый технический анализ',
+    }
+  };
+
+  let LANG = localStorage.getItem('lang') || 'he';
+  function t(k) { return (TR[LANG] || TR.he)[k] || k; }
+
+  function setLang(lang) {
+    LANG = lang;
+    localStorage.setItem('lang', lang);
+    document.documentElement.lang = lang === 'he' ? 'he' : 'en';
+    document.documentElement.dir  = lang === 'he' ? 'rtl' : 'ltr';
+    document.querySelectorAll('.lang-btn').forEach(b => {
+      b.classList.toggle('active', b.textContent.trim() === (lang==='he'?'עב':lang.toUpperCase()));
+    });
+    applyTranslations();
+  }
+
+  function applyTranslations() {
+    document.querySelector('.logo-text h1').textContent = t('title');
+    document.querySelector('.logo-text p').textContent  = t('subtitle');
+    document.getElementById('lbl-status').textContent   = t('statusLbl');
+    document.getElementById('lbl-time').textContent     = t('timeLbl');
+    document.querySelector('.section-title').textContent = t('marketTitle');
+    document.querySelectorAll('.section-title')[1] && (document.querySelectorAll('.section-title')[1].textContent = t('actionTitle'));
+    const cards = document.querySelectorAll('.action-card');
+    ['c1','c2','c3','c4','c5'].forEach((c,i) => {
+      if (cards[i]) {
+        cards[i].querySelector('.card-title').textContent = t(c+'t');
+        cards[i].querySelector('.card-desc').textContent  = t(c+'d');
+      }
+    });
+    const btn = document.querySelector('.btn-analyze');
+    if (btn) btn.textContent = t('analyze');
+    const spinner = document.querySelector('.loading-spinner div:last-child');
+    if (spinner) spinner.textContent = t('loading');
+    const chartTitle = document.getElementById('chartTitle');
+    if (chartTitle) chartTitle.textContent = t('chartSec');
+    const targetTitle = document.getElementById('targetTitle');
+    if (targetTitle) targetTitle.textContent = t('targetSec');
+    ['techSec','newsSec','psychSec','outerSec','riskSec'].forEach((k,i) => {
+      const h4s = document.querySelectorAll('.analysis-section h4');
+      if (h4s[i+2]) h4s[i+2].textContent = t(k);
+    });
+  }
+
+  // Init language on load
+  setLang(LANG);
 
   // ── שעון חי ──────────────────────────────────────────
   function updateClock() {
@@ -771,6 +924,43 @@
     return d;
   }
 
+  // ── גרף מחיר ─────────────────────────────────────────
+  let _activeChart = null;
+
+  async function loadChart(ticker) {
+    const container = document.getElementById('chartContainer');
+    if (!container) return;
+    container.innerHTML = `<div class="chart-placeholder">${t('loadingChart')}</div>`;
+    if (_activeChart) { try { _activeChart.remove(); } catch(e){} _activeChart = null; }
+    try {
+      const data = await fetchJSON(`/api/history/${ticker}`);
+      if (!data || !data.length) {
+        container.innerHTML = `<div class="chart-placeholder">${t('noChart')}</div>`;
+        return;
+      }
+      container.innerHTML = '';
+      const chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth, height: 270,
+        layout: { background: { color: '#0a1220' }, textColor: '#7a9abf' },
+        grid: { vertLines: { color: '#1a2a3a' }, horzLines: { color: '#1a2a3a' } },
+        rightPriceScale: { borderColor: '#1e3a5f' },
+        timeScale: { borderColor: '#1e3a5f', rightOffset: 5, timeVisible: true },
+        crosshair: { mode: 1 },
+      });
+      const cs = chart.addCandlestickSeries({
+        upColor:'#00e676', downColor:'#ff5252',
+        borderUpColor:'#00e676', borderDownColor:'#ff5252',
+        wickUpColor:'#00e676', wickDownColor:'#ff5252',
+      });
+      cs.setData(data);
+      chart.timeScale().fitContent();
+      _activeChart = chart;
+      new ResizeObserver(() => { try { chart.applyOptions({ width: container.clientWidth }); } catch(e){} }).observe(container);
+    } catch(e) {
+      container.innerHTML = `<div class="chart-placeholder">${t('noChart')}</div>`;
+    }
+  }
+
   // ── Signal helpers ─────────────────────────────────────
   function signalClass(sig) {
     if (sig === 'קנייה')         return 'signal-buy';
@@ -832,30 +1022,47 @@
       const hi        = d.target_high ? `${c}${d.target_high}` : '—';
       const staleNote = d.target_stale ? ' <span style="color:#ffc107">⚠️ יעד מיושן</span>' : '';
 
+      const isTech = sources.length === 1 && sources[0] === 'ניתוח טכני עצמאי';
+      const ti = d.tech_info;
       targetSection.innerHTML = sources.length
-        ? `<div style="background:#0a1220;border:1px solid #1e3a5f;border-right:3px solid #00d4ff;
+        ? `<div style="background:#0a1220;border:1px solid #1e3a5f;border-right:3px solid ${isTech?'#ffc107':'#00d4ff'};
                border-radius:8px;padding:12px 16px;margin-top:8px;">
-             <div style="font-size:12px;color:#00d4ff;font-weight:700;margin-bottom:6px;">
-               🎯 יעד ממוצע: ${c}${d.tp}${staleNote}
+             <div style="font-size:12px;color:${isTech?'#ffc107':'#00d4ff'};font-weight:700;margin-bottom:6px;">
+               🎯 יעד: ${c}${d.tp}${staleNote}
                ${analysts > 1 ? ` <span style="color:#7a9abf;font-weight:400">| ${analysts} אנליסטים</span>` : ''}
+               ${isTech ? ` <span style="color:#7a9abf;font-weight:400">| ניתוח טכני עצמאי</span>` : ''}
              </div>
+             ${isTech && ti ? `
+             <div style="font-size:11px;color:#7a9abf;margin-bottom:4px;">
+               📐 ${ti.method} | ביטחון: ${ti.confidence}
+             </div>
+             <div style="font-size:11px;color:#5a7a9a;">
+               RSI: ${ti.rsi} | MA20: ${c}${ti.ma20} | MA50: ${c}${ti.ma50} | תמיכה: ${c}${ti.support} | התנגדות: ${c}${ti.resistance}
+             </div>` : `
              <div style="font-size:11px;color:#7a9abf;">
                טווח: ${lo} – ${hi} &nbsp;|&nbsp; מקורות: ${sources.join(' • ')}
-             </div>
+             </div>`}
            </div>`
-        : `<div style="font-size:11px;color:#3a5a7f;margin-top:6px;">לא נמצא יעד אנליסטים — נעשה שימוש באומדן +10%</div>`;
+        : `<div style="font-size:11px;color:#3a5a7f;margin-top:6px;">מחשב יעד טכני...</div>`;
     }
 
-    // News headlines
+    // טען גרף
+    loadChart(d.ticker);
+
+    // News headlines (עם תרגום עברי)
     const headlines = p.headlines || [];
     const newsList  = document.getElementById('newsList');
     if (headlines.length) {
       newsList.innerHTML = headlines.map(h => {
         const scoreColor = h.score > 0 ? '#00e676' : h.score < 0 ? '#ff5252' : '#7a9abf';
         const scoreIcon  = h.score > 0 ? '▲' : h.score < 0 ? '▼' : '●';
+        const displayTitle = h.title_he && h.title_he !== h.title ? h.title_he : h.title;
         return `<div style="background:#0a1220;border:1px solid #1e3a5f;border-right:3px solid ${scoreColor};border-radius:8px;padding:10px 14px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-            <span style="font-size:13px;color:#c8d8e8;line-height:1.5;">${h.title}</span>
+            <div style="flex:1;">
+              <div style="font-size:13px;color:#c8d8e8;line-height:1.5;">${displayTitle}</div>
+              ${h.title_he && h.title_he !== h.title ? `<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">${h.title}</div>` : ''}
+            </div>
             <span style="font-size:11px;color:${scoreColor};white-space:nowrap;flex-shrink:0;">${scoreIcon} ${h.pub}</span>
           </div>
           <div style="font-size:11px;color:#3a5a7f;margin-top:4px;">לפני ${h.age || '?'}</div>
@@ -863,7 +1070,7 @@
       }).join('');
       document.getElementById('newsText').textContent = p.summary || '';
     } else {
-      newsList.innerHTML = '<div style="color:#3a5a7f;font-size:13px;">לא נמצאו חדשות אחרונות</div>';
+      newsList.innerHTML = `<div style="color:#3a5a7f;font-size:13px;">${t('noNews')}</div>`;
       document.getElementById('newsText').textContent = '';
     }
 
@@ -972,37 +1179,61 @@
   }
 
   // ── Show sector ────────────────────────────────────────
-  function showSectorResult(list, sector) {
+  function showSectorResult(resp, sector) {
+    // תמיכה גם בפורמט ישן (מערך) וגם בחדש (אובייקט עם stocks + analysis)
+    const list = Array.isArray(resp) ? resp : (resp.stocks || []);
+    const an   = Array.isArray(resp) ? {} : (resp.analysis || {});
+
     if (!list.length) { showError('לא נמצאו נתונים לסקטור זה'); return; }
     const top = list[0];
     const c   = cur(top);
 
     document.getElementById('resultTitle').textContent = `🏭 סקטור ${sector} — ${list.length} מניות`;
-    document.getElementById('signalBadge').textContent = `${signalIcon(top.signal)} ${top.ticker}`;
-    document.getElementById('signalBadge').className   = `signal-badge ${signalClass(top.signal)}`;
-    document.getElementById('rPrice').textContent      = `${c}${top.price}`;
-    document.getElementById('rChange').textContent     = `הכי חזקה היום`;
-    document.getElementById('rRisk').textContent       = riskLabel(top);
-    document.getElementById('rTarget').textContent     = `${c}${top.tp || '—'}`;
-    document.getElementById('rStop').textContent       = `${c}${top.stop || '—'}`;
+    document.getElementById('signalBadge').textContent = an.trend || (top.signal.includes('קנייה') ? '⬆ שוריש' : '↔ מעורב');
+    document.getElementById('signalBadge').className   = `signal-badge ${an.avg_change > 0 ? 'signal-buy' : an.avg_change < 0 ? 'signal-sell' : 'signal-hold'}`;
+    document.getElementById('rPrice').textContent      = an.avg_change !== undefined ? `${an.avg_change > 0 ? '+' : ''}${an.avg_change}%` : `${c}${top.price}`;
+    document.getElementById('rChange').textContent     = 'שינוי ממוצע בסקטור';
+    document.getElementById('rRisk').textContent       = an.buy_count !== undefined ? `${an.buy_count}/${an.total} קנייה` : riskLabel(top);
+    document.getElementById('rTarget').textContent     = an.avg_upside ? `+${an.avg_upside}% פוטנציאל` : `${c}${top.tp || '—'}`;
+    document.getElementById('rStop').textContent       = an.sentiment || '—';
 
-    const rows = list.map(s => {
-      const sc = cur(s);
-      return `${s.ticker}: ${sc}${s.price} (${s.change > 0 ? '+' : ''}${s.change}%) — ${s.signal}`;
-    }).join('\n');
-    document.getElementById('techText').textContent = rows;
+    // טבלת מניות
+    const tableHtml = `
+      <table class="sector-table">
+        <thead><tr>
+          <th>מניה</th><th>מחיר</th><th>שינוי</th><th>יעד</th><th>איתות</th>
+        </tr></thead>
+        <tbody>
+          ${list.map(s => {
+            const sc = cur(s);
+            const chgColor = s.change > 0 ? '#00e676' : s.change < 0 ? '#ff5252' : '#7a9abf';
+            const sigColor = s.signal.includes('קנייה') ? '#00e676' : s.signal === 'מכירה' ? '#ff5252' : '#ffc107';
+            return `<tr>
+              <td style="font-weight:700;color:#e0e6f0;">${s.ticker}<br><span style="font-size:10px;color:#4a6a8a;">${(s.name||'').substring(0,18)}</span></td>
+              <td>${sc}${s.price}</td>
+              <td style="color:${chgColor}">${s.change > 0 ? '+' : ''}${s.change}%</td>
+              <td style="color:#00d4ff">${sc}${s.tp || '—'}</td>
+              <td style="color:${sigColor};font-weight:700">${s.signal}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+    document.getElementById('techText').innerHTML = tableHtml;
 
-    const buys  = list.filter(s => s.signal.includes('קנייה')).map(s => s.ticker).join(', ');
-    const sells = list.filter(s => s.signal === 'מכירה').map(s => s.ticker).join(', ');
-    document.getElementById('newsText').textContent =
-      `איתות קנייה: ${buys || 'אין'} | איתות מכירה: ${sells || 'אין'}`;
+    // סיכום ניתוח
+    document.getElementById('newsText').textContent = an.summary ||
+      `קנייה: ${list.filter(s=>s.signal.includes('קנייה')).map(s=>s.ticker).join(', ')||'אין'} | מכירה: ${list.filter(s=>s.signal==='מכירה').map(s=>s.ticker).join(', ')||'אין'}`;
 
-    document.getElementById('outerText').textContent =
-      `המניה החזקה ביותר היום: ${top.ticker} (+${top.change}%) | פוטנציאל: +${top.upside || '—'}%`;
+    document.getElementById('outerText').textContent = an.best_ticker
+      ? `החזקה ביותר: ${an.best_ticker} (${an.best_change>0?'+':''}${an.best_change}%) | החלשה ביותר: ${an.worst_ticker} (${an.worst_change>0?'+':''}${an.worst_change}%)`
+      : `המניה החזקה: ${top.ticker} (${top.change>0?'+':''}${top.change}%)`;
     document.getElementById('macroText').textContent = '⚠️ המלצה בלבד — לא ייעוץ השקעות מורשה.';
 
-    const tags = list.map(s => `${s.ticker} ${s.signal.includes('קנייה') ? '✅' : s.signal === 'מכירה' ? '❌' : '⏳'}`);
-    document.getElementById('tagRow').innerHTML = tags.map(t => `<span class="tag">${t}</span>`).join('');
+    // הסתר גרף בסקטור
+    document.getElementById('chartContainer').innerHTML = '<div class="chart-placeholder">גרף זמין לניתוח מניה בודדת</div>';
+
+    const tags = list.map(s => `${s.ticker} ${s.signal.includes('קנייה')?'✅':s.signal==='מכירה'?'❌':'⏳'}`);
+    document.getElementById('tagRow').innerHTML = tags.map(tg => `<span class="tag">${tg}</span>`).join('');
 
     document.getElementById('resultArea').classList.add('visible');
     document.getElementById('resultArea').scrollIntoView({ behavior:'smooth', block:'start' });
